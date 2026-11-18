@@ -1,0 +1,13 @@
+credentials.json
+token.json
+.env
+data/
+*.db
+.venv/
+__pycache__/
+jd.txt
+rubric.md
+facts.md
+labels.csv
+blocked_names.txt
+.private/

@@ -1,0 +1,12 @@
+﻿job_id,title,company,location,url,label,split
+900000001,Senior Business Analyst,Kauri Analytics,Auckland (Hybrid),https://jobs.example.com/view/900000001/,shortlist,tune
+900000002,Business Analyst,Rimu Freight,Auckland,https://jobs.example.com/view/900000002/,shortlist,holdout
+900000003,Process Analyst,Harakeke Retail Group,"Auckland, New Zealand (Hybrid)",https://jobs.example.com/view/900000003/,shortlist,tune
+900000004,Product Owner,Totara Software,Auckland (Remote),https://jobs.example.com/view/900000004/,maybe,tune
+900000005,UAT Lead,Example Recruiting,Auckland,https://jobs.example.com/view/900000005/,maybe,holdout
+900000006,Change Analyst,Kowhai Energy,Auckland,https://jobs.example.com/view/900000006/,maybe,tune
+900000007,Graduate Analyst,Kauri Analytics,Auckland,https://jobs.example.com/view/900000007/,skip,tune
+900000008,Senior Software Engineer,Totara Software,Auckland,https://jobs.example.com/view/900000008/,skip,holdout
+900000009,Head of Operations,Rimu Freight,Hamilton,https://jobs.example.com/view/900000009/,skip,tune
+900000010,Business Analyst,Matai Consulting,Wellington,https://jobs.example.com/view/900000010/,skip,tune
+900000011,Reporting Analyst,Kowhai Energy,Auckland (Hybrid),https://jobs.example.com/view/900000011/,,
