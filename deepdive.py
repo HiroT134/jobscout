@@ -32,7 +32,7 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_SEARCHES = 6
 MAX_CONTINUATIONS = 3  # pause_turn resumes during research
 MAX_ATTEMPTS = 2  # first try plus one retry, for the brief and the drafts
-# Never scrape LinkedIn or job sites (CLAUDE.md); subdomains are covered.
+# Never scrape LinkedIn or job sites; blocking a domain also blocks its subdomains.
 BLOCKED_DOMAINS = ["linkedin.com", "seek.co.nz", "seek.com.au", "indeed.com", "glassdoor.com",
                    "glassdoor.co.nz", "trademe.co.nz", "jora.com", "talent.com"]
 NAMES_FILE = ROOT / "blocked_names.txt"  # gitignored; see blocked_names.example.txt

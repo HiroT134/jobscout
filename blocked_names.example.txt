@@ -1,0 +1,11 @@
+# Example file: copy to blocked_names.txt and edit. All names below are fictional.
+#
+# deepdive.py reads one name per line. Blank lines and lines starting with # are ignored.
+# Each name is added to the client names found in facts.md, and drafts that mention
+# any of them fail the checks.
+Harbor Partners
+Bellwether Mutual
+Ostrander Logistics
+
+# "allow: <Name>" lines are never blocked, even if facts.md would otherwise mark them.
+allow: Kauri Analytics
