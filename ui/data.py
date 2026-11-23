@@ -5,6 +5,7 @@ default data/demo.db. Relative paths are under the repository root. The file is 
 with SQLite's read-only mode and query_only is set, so nothing here can write to it.
 """
 
+import json
 import os
 import sqlite3
 from dataclasses import dataclass, field
@@ -81,6 +82,46 @@ def filter_jobs(jobs: list[dict], f: Filters) -> list[dict]:
 
 def jobs(conn, f: Filters | None = None) -> list[dict]:
     return filter_jobs(all_jobs(conn), f or Filters())
+
+
+def job_id_for_row(ids: list[str], rows: list[int]) -> str | None:
+    """The job id behind a table selection. `ids` are the job ids in the order the table
+    was given them; `rows` are the selected row positions in that data, which the table
+    reports in data order even when the viewer has sorted it by a column. None if nothing
+    is selected or the position is out of range."""
+    if not rows:
+        return None
+    i = rows[0]
+    return ids[i] if isinstance(i, int) and 0 <= i < len(ids) else None
+
+
+def visible_selection(selected: str | None, ids: list[str]) -> str | None:
+    """`selected` if that job is still in the table, else None (filtered out or gone)."""
+    return selected if selected in ids else None
+
+
+MAX_REASONS = 4
+
+
+def job_detail(conn, job_id: str) -> dict | None:
+    """One listing with its most recent score and reasons (at most MAX_REASONS), or None
+    if there is no scored listing with that id."""
+    row = conn.execute(
+        """SELECT l.job_id, l.company, l.title, l.location, l.url, l.first_seen_at,
+                  s.score, s.verdict, s.reasons_json
+           FROM listings l
+           JOIN scores s ON s.id = (SELECT id FROM scores WHERE job_id = l.job_id
+                                    ORDER BY scored_at DESC, id DESC LIMIT 1)
+           WHERE l.job_id = ?""", (job_id,)).fetchone()
+    if row is None:
+        return None
+    try:
+        reasons = [str(r) for r in json.loads(row["reasons_json"])][:MAX_REASONS]
+    except (TypeError, ValueError):
+        reasons = []
+    return {"job_id": row["job_id"], "company": row["company"], "title": row["title"],
+            "location": row["location"], "date": _day(row["first_seen_at"]),
+            "score": row["score"], "verdict": row["verdict"], "url": row["url"], "reasons": reasons}
 
 
 def locations(conn) -> list[str]:

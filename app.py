@@ -3,6 +3,7 @@
 Reads the database named by JOBSCOUT_DB (default data/demo.db) and never writes to it.
 """
 
+import html
 import sys
 from pathlib import Path
 
@@ -13,6 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ui import data  # noqa: E402
 
 COLUMNS = ["company", "title", "location", "date", "score", "verdict", "url"]
+SELECTED = "selected_job"     # session key: job id shown in the detail panel, or None
+SELECTED_FROM = "selected_from"  # session key: the table key whose row click set SELECTED
+TABLE_IDS = "table_job_ids"   # session key: job ids in the order the table was last drawn
+TABLE_NONCE = "table_nonce"   # session key: bumped to give the table a fresh, unselected key
 # background and text colour per verdict; dark text keeps them readable in either theme
 VERDICT_STYLE = {
     "shortlist": "background-color: #d3f2dc; color: #14532d; font-weight: 600",
@@ -54,12 +59,46 @@ if bounds:
 shown = data.filter_jobs(jobs, data.Filters(lo, hi, verdicts, company, chosen_locations, date_from, date_to))
 st.subheader(f"{len(shown)} of {len(jobs)} jobs match the filters")
 
+# Selection is kept as a job id in session state, never as a row position. A row position
+# only means something for the rows the table was drawn with, so the table gets a fresh
+# key whenever those rows change: the selection stored under the current key then always
+# refers to `ids`, and a stale highlight can never point at a different job.
+ss = st.session_state
+ids = [j["job_id"] for j in shown]
+if ss.get(TABLE_IDS) != ids:
+    ss[TABLE_IDS] = ids
+    ss[TABLE_NONCE] = ss.get(TABLE_NONCE, 0) + 1
+table_key = f"jobs_table_{ss[TABLE_NONCE]}"
+table_state = ss.get(table_key)
+rows = list(table_state["selection"]["rows"]) if table_state else []
+if rows:
+    ss[SELECTED], ss[SELECTED_FROM] = data.job_id_for_row(ids, rows), table_key
+elif ss.get(SELECTED_FROM) == table_key:
+    ss[SELECTED] = None  # the viewer clicked the selected row again to deselect it
+# a job that was filtered out is dropped, so it does not come back when filters widen
+selected = ss[SELECTED] = data.visible_selection(ss.get(SELECTED), ids)
+
+
+def close_panel() -> None:
+    ss[SELECTED] = None
+    ss[TABLE_NONCE] = ss.get(TABLE_NONCE, 0) + 1  # new table key clears the row highlight
+
+
 table = pd.DataFrame([{k: j[k] for k in COLUMNS} for j in shown], columns=COLUMNS)
 table["date"] = pd.to_datetime(table["date"])
 styled = table.style.map(lambda v: VERDICT_STYLE.get(v, ""), subset=["verdict"])
 
-st.dataframe(
+if selected:
+    table_area, panel = st.columns([2, 1], gap="medium")
+else:
+    st.caption("Click a row to see why it got its verdict.")
+    table_area, panel = st.container(), None
+
+table_area.dataframe(
     styled,
+    key=table_key,
+    on_select="rerun",
+    selection_mode="single-row",
     hide_index=True,
     width="stretch",
     column_order=COLUMNS,
@@ -73,3 +112,26 @@ st.dataframe(
         "url": st.column_config.LinkColumn("Link", display_text="View"),
     },
 )
+
+if selected:
+    conn = data.connect()
+    try:
+        job = data.job_detail(conn, selected)
+    finally:
+        conn.close()
+    with panel.container(border=True):
+        if job is None:
+            st.warning("This job is no longer in the database.")
+        else:
+            st.markdown(f"### {html.escape(job['title'])}")
+            st.markdown(f"**{html.escape(job['company'])}**  \n{html.escape(job['location'])} · "
+                        f"first seen {job['date']:%Y-%m-%d}")
+            st.markdown(
+                f"<span style='{VERDICT_STYLE.get(job['verdict'], '')}; padding: 0.2rem 0.7rem; "
+                f"border-radius: 999px'>{html.escape(job['verdict'])}</span>", unsafe_allow_html=True)
+            st.progress(job["score"] / 100, text=f"Score {job['score']} / 100")
+            if job["reasons"]:
+                st.markdown("**Why this verdict**")
+                st.markdown("\n".join(f"- {html.escape(r)}" for r in job["reasons"]))
+            st.link_button("View listing", job["url"])
+        st.button("Close", on_click=close_panel)

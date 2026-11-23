@@ -81,18 +81,23 @@ MAYBE_REASONS = ["{title} is an acceptable fit but the scope is unclear from the
                  "{company} is a {kind}, which the rubric treats as a middle case.",
                  "Seniority cannot be judged from the title alone.",
                  "Contract or analyst-level title could go either way."]
+# per skip cause: the main reason, then follow-ups that hold for any listing with that cause
 SKIP_REASONS = {
-    "location": "{location} is outside Auckland and the role is not listed as remote.",
-    "title": "{title} matches a poor-fit rule in the rubric.",
-    "kind": "{company} is a {kind}, which is outside the target industries.",
-    "seniority": "Seniority is well away from the target level.",
+    "location": ["{location} is outside Auckland and the role is not listed as remote.",
+                 "Relocation is outside the scope of the search.",
+                 "Hybrid or remote work is not mentioned in the alert."],
+    "title": ["{title} matches a poor-fit rule in the rubric.",
+              "The role type is away from the BA and PO roles being targeted.",
+              "Company and location alone cannot lift a poor-fit title."],
+    "kind": ["{company} is a {kind}, which is outside the target industries.",
+             "The title alone is not enough to outweigh the industry rule.",
+             "Pay and scope are unknown, so there is nothing to offset it."],
 }
 
 
 def _pick_reasons(rng: random.Random, verdict: str, skip_cause: str, fields: dict) -> list[str]:
     if verdict == "skip":
-        first = SKIP_REASONS[skip_cause]
-        rest = [r for k, r in SKIP_REASONS.items() if k != skip_cause and k != "location"]
+        first, *rest = SKIP_REASONS[skip_cause]
         chosen = [first] + rng.sample(rest, rng.randint(1, 2))
     else:
         pool = SHORTLIST_REASONS if verdict == "shortlist" else MAYBE_REASONS
