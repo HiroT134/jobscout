@@ -133,12 +133,13 @@ The first command builds `data/demo.db` (fixed seed, so it is the same every tim
 - On the tuning set (126 jobs), agreement with one person's labels was 76.2% against a 65.1% skip-everything baseline. This number is partly fitted.
 - On a held-out set of 40 jobs, run once, agreement was 60.0% (24 of 40) against a 65.0% baseline, statistically indistinguishable from the baseline.
 - No job labelled shortlist was scored skip in either set.
+- The tune/held-out split is stored per row in `labels.csv` and is never reshuffled once assigned; seed 20261106 was used only for the first assignment.
 
 Method, full results and caveats are in [EVALUATION.md](EVALUATION.md).
 
 ## Cost
 
-TBD
+**Cost.** One deepdive run (Opus, 6 web searches) used about 185K input and 11K output tokens, which cost about 1.03 USD at list prices on 23 Nov 2026. Scoring uses Haiku with a cached prompt, and the full month of daily scoring plus all evaluation runs cost about 0.13 USD. Figures are from the Anthropic console usage page and will change with prices and usage.
 
 ## Limitations and privacy
 
