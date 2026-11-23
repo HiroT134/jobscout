@@ -6,10 +6,19 @@ Reads the database named by JOBSCOUT_DB (default data/demo.db) and never writes 
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ui import data  # noqa: E402
+
+COLUMNS = ["company", "title", "location", "date", "score", "verdict", "url"]
+# background and text colour per verdict; dark text keeps them readable in either theme
+VERDICT_STYLE = {
+    "shortlist": "background-color: #d3f2dc; color: #14532d; font-weight: 600",
+    "maybe": "background-color: #fdeccb; color: #7a4a00; font-weight: 600",
+    "skip": "background-color: #e7e8ea; color: #3f4650",
+}
 
 st.set_page_config(page_title="Job Scout demo", layout="wide")
 st.title("Job Scout")
@@ -29,33 +38,38 @@ try:
 finally:
     conn.close()
 
-with st.sidebar:
-    st.header("Filters")
-    lo, hi = st.slider("Score", 0, 100, (0, 100))
-    verdicts = st.multiselect("Verdict", data.VERDICTS, default=data.VERDICTS)
-    company = st.text_input("Company contains")
-    chosen_locations = st.multiselect("Location", locations, placeholder="All locations")
-    date_from = date_to = None
-    if bounds:
-        picked = st.date_input("First seen", value=bounds, min_value=bounds[0], max_value=bounds[1])
-        # a range picker returns a single date while the second one is still being chosen
-        picked = tuple(picked) if isinstance(picked, (list, tuple)) else (picked,)
-        date_from = picked[0] if picked else None
-        date_to = picked[1] if len(picked) > 1 else date_from
+search_col, verdict_col, location_col, score_col, date_col = st.columns([3, 3, 3, 2, 2], gap="medium")
+company = search_col.text_input("Search company", placeholder="e.g. Kauri")
+verdicts = verdict_col.multiselect("Verdict", data.VERDICTS, default=data.VERDICTS)
+chosen_locations = location_col.multiselect("Location", locations, placeholder="All locations")
+lo, hi = score_col.slider("Score", 0, 100, (0, 100))
+date_from = date_to = None
+if bounds:
+    picked = date_col.date_input("First seen", value=bounds, min_value=bounds[0], max_value=bounds[1])
+    # a range picker returns a single date while the second one is still being chosen
+    picked = tuple(picked) if isinstance(picked, (list, tuple)) else (picked,)
+    date_from = picked[0] if picked else None
+    date_to = picked[1] if len(picked) > 1 else date_from
 
 shown = data.filter_jobs(jobs, data.Filters(lo, hi, verdicts, company, chosen_locations, date_from, date_to))
 st.subheader(f"{len(shown)} of {len(jobs)} jobs match the filters")
 
+table = pd.DataFrame([{k: j[k] for k in COLUMNS} for j in shown], columns=COLUMNS)
+table["date"] = pd.to_datetime(table["date"])
+styled = table.style.map(lambda v: VERDICT_STYLE.get(v, ""), subset=["verdict"])
+
 st.dataframe(
-    [{k: j[k] for k in ("company", "title", "location", "date", "score", "verdict", "url")} for j in shown],
+    styled,
     hide_index=True,
+    width="stretch",
+    column_order=COLUMNS,
     column_config={
-        "company": "Company",
-        "title": "Title",
-        "location": "Location",
+        "company": st.column_config.TextColumn("Company"),
+        "title": st.column_config.TextColumn("Title", width="large"),
+        "location": st.column_config.TextColumn("Location"),
         "date": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
-        "score": st.column_config.NumberColumn("Score"),
-        "verdict": "Verdict",
-        "url": st.column_config.LinkColumn("Link", display_text="Open"),
+        "score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
+        "verdict": st.column_config.TextColumn("Verdict"),
+        "url": st.column_config.LinkColumn("Link", display_text="View"),
     },
 )

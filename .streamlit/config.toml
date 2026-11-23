@@ -1,3 +1,7 @@
 # keep the demo offline: the browser sends no usage statistics
 [browser]
 gatherUsageStats = false
+
+# minimal toolbar: hides the Deploy button
+[client]
+toolbarMode = "minimal"
