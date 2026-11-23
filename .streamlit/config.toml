@@ -1,0 +1,3 @@
+# keep the demo offline: the browser sends no usage statistics
+[browser]
+gatherUsageStats = false

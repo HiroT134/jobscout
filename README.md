@@ -116,6 +116,18 @@ Run the tests with:
 python -m unittest discover -s tests
 ```
 
+## Demo
+
+A read-only browser view over a database of fictional listings, no Gmail or API key needed:
+
+```
+pip install -r requirements-ui.txt
+python scripts/make_demo_db.py
+streamlit run app.py
+```
+
+The first command builds `data/demo.db` (fixed seed, so it is the same every time). The page reads the database named by `JOBSCOUT_DB`, default `data/demo.db`, opens it read-only and never writes to it.
+
 ## Evaluation
 
 - On the tuning set (126 jobs), agreement with one person's labels was 76.2% against a 65.1% skip-everything baseline. This number is partly fitted.
