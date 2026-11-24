@@ -62,8 +62,15 @@ Requires Python 3.12 (the version it was built and tested on). The commands belo
 ```
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements-ui.txt    # for the demo
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt   # for the tests
+.venv\Scripts\python.exe scripts\make_demo_db.py                  # build the demo database
+.venv\Scripts\streamlit.exe run app.py                            # run the demo app
+.venv\Scripts\python.exe -m pytest -q                             # run the tests
 ```
+
+On Windows, if `python` opens the Windows Store app instead of running, use `py -3.12` instead (for example `py -3.12 -m venv .venv`).
 
 Copy the example files and edit them for your own search:
 
@@ -113,20 +120,14 @@ To run the digest daily, point Windows Task Scheduler at `run_morning.bat`. Each
 Run the tests with:
 
 ```
-python -m unittest discover -s tests
+.venv\Scripts\python.exe -m pytest -q
 ```
 
 ## Demo
 
-A read-only browser view over a database of fictional listings, no Gmail or API key needed:
+A read-only browser view over a database of fictional listings, no Gmail or API key needed. To install, build and run it, see the commands in [Install and run](#install-and-run).
 
-```
-pip install -r requirements-ui.txt
-python scripts/make_demo_db.py
-streamlit run app.py
-```
-
-The first command builds `data/demo.db` (fixed seed, so it is the same every time). The page reads the database named by `JOBSCOUT_DB`, default `data/demo.db`, opens it read-only and never writes to it.
+`scripts/make_demo_db.py` builds `data/demo.db` (fixed seed, so it is the same every time). The page reads the database named by `JOBSCOUT_DB`, default `data/demo.db`, opens it read-only and never writes to it.
 
 ## Evaluation
 
