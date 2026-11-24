@@ -1,0 +1,25 @@
+{
+  "_comment": "Text and figures for the Evaluation tab that results.csv does not hold. All numbers that results.csv does hold are read from there. Wording is taken from EVALUATION.md.",
+  "headline": "Job Scout is a high-recall filter, not a classifier that beats a trivial baseline.",
+  "summary": [
+    "On the data used to tune the rubric, agreement with my own labels reached 76.2% against a 65.1% skip-everything baseline.",
+    "On a held-out set that was run once, agreement was 60.0% (24 of 40) against a 65.0% baseline. With 40 jobs this is statistically indistinguishable from the baseline (95% interval about 45% to 74%).",
+    "No job I had labelled \"shortlist\" was scored \"skip\" in either set. The tool's value is that it rarely hides a role I would have wanted, so I read a short list instead of every alert."
+  ],
+  "iterations": {
+    "0": {"changed": "Original rubric"},
+    "1": {"changed": "General rules by role family"},
+    "2": {"changed": "Platform and product-company rules"},
+    "3": {"changed": "Same rules, medium effort"},
+    "4": {"changed": "Consulting and platform-consultant section",
+          "shortlist_hits": 14, "shortlist_predicted": 16, "shortlist_labelled": 23}
+  },
+  "holdout": {"labelled_shortlists_scored_skip": 0},
+  "noise_check": "scoring the tuning set again with the same rubric and prompt moved agreement from 96 to 94 of 126 (76.2% to 74.6%). The model is not fully repeatable, so differences of one or two jobs mean nothing.",
+  "caveats": [
+    "The tuning result is optimistic. I wrote the rubric rules from the cases the earlier iterations got wrong, so the tuning set is partly fitted.",
+    "The held-out result is the honest number. It is below the baseline, but 40 jobs and five predicted shortlists are too few to say it is worse, only that there is no evidence it is better.",
+    "Shortlist recall is modest (3 of 7 on held-out). The \"high recall\" claim is the weaker one: every labelled shortlist scored shortlist or maybe, none skip. It does not mean every shortlist was surfaced as a shortlist.",
+    "Pay is rarely in alert emails, so the scorer is told not to guess it. Roles where pay decides the answer are scored on title and employer alone."
+  ]
+}

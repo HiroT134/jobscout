@@ -3,13 +3,19 @@
 The database path comes from the JOBSCOUT_DB environment variable (read on each call),
 default data/demo.db. Relative paths are under the repository root. The file is opened
 with SQLite's read-only mode and query_only is set, so nothing here can write to it.
+
+The Evaluation and Sample deepdive tabs read static committed files only: results.csv,
+ui/eval_summary.json and ui/sample_deepdive.md. Nothing here calls an API.
 """
 
+import csv
 import json
 import os
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -132,3 +138,113 @@ def date_bounds(conn) -> tuple[date, date] | None:
     """First and last NZ date a listing was first seen, or None if there are no listings."""
     row = conn.execute("SELECT MIN(first_seen_at), MAX(first_seen_at) FROM listings").fetchone()
     return None if row[0] is None else (_day(row[0]), _day(row[1]))
+
+
+# ---------- evaluation and sample deep dive (static files, no database, no API) ----------
+
+RESULTS_CSV = ROOT / "results.csv"
+EVAL_SUMMARY = ROOT / "ui" / "eval_summary.json"
+SAMPLE_DEEPDIVE = ROOT / "ui" / "sample_deepdive.md"
+ITERATIONS = range(5)  # tuning iterations 0 to 4, as reported in EVALUATION.md
+_ITERATION_RE = re.compile(r"iteration (\d+):")
+
+
+def pct(value: str | float) -> str:
+    """'0.8125' -> '81.3%' (half up, as EVALUATION.md rounds); exactly 100 -> '100%'."""
+    d = (Decimal(str(value)) * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return "100%" if d == 100 else f"{d}%"
+
+
+def _run(row: dict) -> dict:
+    def count(key):
+        return int(row[key]) if row.get(key) else None
+    return {"agree": int(row["tune_agree"]), "compared": int(row["tune_compared"]),
+            "agreement": float(row["tune_rate"]), "baseline": float(row["skip_baseline"]),
+            "precision": float(row["shortlist_precision"]), "recall": float(row["shortlist_recall"]),
+            "top15_shortlist": float(row["top15_shortlist"]),
+            "shortlist_hits": count("shortlist_hits"), "shortlist_predicted": count("shortlist_predicted"),
+            "shortlist_labelled": count("shortlist_labelled"),
+            "prompt_sha": row["prompt_sha"], "rubric_sha": row["rubric_sha"]}
+
+
+def load_evaluation(results_path: Path = RESULTS_CSV, summary_path: Path = EVAL_SUMMARY) -> dict:
+    """The tuning iterations 0-4 and the held-out run, numbers from results.csv, labels and
+    text from eval_summary.json (only what the CSV does not hold). Raises ValueError if an
+    iteration is missing or repeated, if there is not exactly one held-out run, or if a count
+    in the summary file disagrees with a rate in the CSV."""
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    with results_path.open(encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    tuning: dict[int, dict] = {}
+    for row in rows:
+        m = _ITERATION_RE.match(row["note"])
+        if row["split"] == "tune" and m:
+            n = int(m.group(1))
+            if n in tuning:
+                raise ValueError(f"results.csv has iteration {n} more than once")
+            tuning[n] = row
+    missing = [n for n in ITERATIONS if n not in tuning]
+    if missing:
+        raise ValueError(f"results.csv is missing iterations {missing}")
+    holdouts = [r for r in rows if r["split"] == "holdout"]
+    if len(holdouts) != 1:
+        raise ValueError(f"expected one held-out run in results.csv, found {len(holdouts)}")
+
+    iterations = []
+    for n in ITERATIONS:
+        run = _run(tuning[n]) | {"iteration": n}
+        extra = summary["iterations"][str(n)]
+        run["changed"] = extra["changed"]
+        for key in ("shortlist_hits", "shortlist_predicted", "shortlist_labelled"):
+            if run[key] is None and key in extra:
+                run[key] = extra[key]
+        if run["shortlist_hits"] is not None:
+            if (round(run["shortlist_hits"] / run["shortlist_predicted"], 4) != round(run["precision"], 4)
+                    or round(run["shortlist_hits"] / run["shortlist_labelled"], 4) != round(run["recall"], 4)):
+                raise ValueError(f"iteration {n}: shortlist counts do not match results.csv")
+        iterations.append(run)
+    holdout = _run(holdouts[0]) | summary["holdout"]
+    holdout["top15_hits"] = round(holdout["top15_shortlist"] * 15)
+
+    return {"headline": summary["headline"], "summary": summary["summary"],
+            "caveats": summary["caveats"], "noise_check": summary["noise_check"],
+            "iterations": iterations, "holdout": holdout}
+
+
+def tuning_table(ev: dict) -> list[dict]:
+    """Rows of the tuning table, formatted as in EVALUATION.md."""
+    def with_count(rate, hits, total):
+        return f"{pct(rate)} ({hits}/{total})" if hits is not None else pct(rate)
+    return [{"Iteration": r["iteration"], "What changed": r["changed"],
+             "Agreement": f"{pct(r['agreement'])} ({r['agree']}/{r['compared']})",
+             "Shortlist precision": with_count(r["precision"], r["shortlist_hits"], r["shortlist_predicted"]),
+             "Shortlist recall": with_count(r["recall"], r["shortlist_hits"], r["shortlist_labelled"])}
+            for r in ev["iterations"]]
+
+
+def holdout_table(ev: dict) -> list[dict]:
+    h = ev["holdout"]
+    return [{"Metric": "Agreement", "Result": f"{pct(h['agreement'])} ({h['agree']}/{h['compared']})"},
+            {"Metric": "Shortlist precision",
+             "Result": f"{pct(h['precision'])} ({h['shortlist_hits']}/{h['shortlist_predicted']})"},
+            {"Metric": "Shortlist recall",
+             "Result": f"{pct(h['recall'])} ({h['shortlist_hits']}/{h['shortlist_labelled']})"},
+            {"Metric": "Labelled shortlists scored skip", "Result": str(h["labelled_shortlists_scored_skip"])},
+            {"Metric": "Top-15 precision (labelled shortlist)", "Result": f"{h['top15_hits']} of 15"}]
+
+
+def agreement_chart_rows(ev: dict) -> list[dict]:
+    """One row per bar: iterations 0-4 then the held-out run, agreement as a percentage."""
+    rows = [{"run": f"Iteration {r['iteration']}", "set": "Tuning (126 jobs)",
+             "agreement": r["agreement"] * 100, "label": f"{r['agree']}/{r['compared']}",
+             "baseline": r["baseline"] * 100} for r in ev["iterations"]]
+    h = ev["holdout"]
+    rows.append({"run": "Held-out", "set": "Held-out (40 jobs, run once)", "agreement": h["agreement"] * 100,
+                 "label": f"{h['agree']}/{h['compared']}", "baseline": h["baseline"] * 100})
+    return rows
+
+
+def sample_deepdive(path: Path = SAMPLE_DEEPDIVE) -> str:
+    """The hand-written fictional deep-dive sample, as markdown."""
+    return path.read_text(encoding="utf-8")

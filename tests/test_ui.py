@@ -1,5 +1,7 @@
 import html
+import json
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -138,7 +140,121 @@ class SelectionLookupTests(unittest.TestCase):
         self.assertIsNone(data.visible_selection("j2", []))
 
 
-HINT = "Click a row to see why it got its verdict."
+class EvaluationDataTests(unittest.TestCase):
+    """The Evaluation tab's loader, against the committed results.csv and eval_summary.json."""
+
+    def setUp(self):
+        self.ev = data.load_evaluation()
+
+    def test_iterations_and_holdout_match_evaluation_md(self):
+        self.assertEqual([r["iteration"] for r in self.ev["iterations"]], [0, 1, 2, 3, 4])
+        self.assertEqual([(r["agree"], r["compared"]) for r in self.ev["iterations"]],
+                         [(69, 126), (81, 126), (81, 126), (81, 126), (96, 126)])
+        h = self.ev["holdout"]
+        self.assertEqual((h["agree"], h["compared"]), (24, 40))
+        self.assertEqual((h["shortlist_hits"], h["shortlist_predicted"], h["shortlist_labelled"]), (3, 5, 7))
+        self.assertEqual(h["labelled_shortlists_scored_skip"], 0)
+        self.assertEqual(h["top15_hits"], 7)
+        # evaluated with the iteration 4 rubric
+        self.assertEqual((h["prompt_sha"], h["rubric_sha"]), ("776782997ac5", "0a468fc03475"))
+
+    def test_noise_check_row_is_not_an_iteration(self):
+        self.assertEqual(self.ev["iterations"][4]["agree"], 96)  # not the 94 of the re-run
+
+    def test_tables_formatted_as_in_evaluation_md(self):
+        tuning = data.tuning_table(self.ev)
+        self.assertEqual(tuning[0], {"Iteration": 0, "What changed": "Original rubric",
+                                     "Agreement": "54.8% (69/126)", "Shortlist precision": "100%",
+                                     "Shortlist recall": "30.4%"})
+        self.assertEqual(tuning[3]["Shortlist precision"], "81.3%")  # 0.8125 rounds half up
+        self.assertEqual(tuning[4]["Agreement"], "76.2% (96/126)")
+        self.assertEqual(tuning[4]["Shortlist precision"], "87.5% (14/16)")
+        self.assertEqual(tuning[4]["Shortlist recall"], "60.9% (14/23)")
+        self.assertEqual({r["Metric"]: r["Result"] for r in data.holdout_table(self.ev)}, {
+            "Agreement": "60.0% (24/40)", "Shortlist precision": "60.0% (3/5)",
+            "Shortlist recall": "42.9% (3/7)", "Labelled shortlists scored skip": "0",
+            "Top-15 precision (labelled shortlist)": "7 of 15"})
+
+    def test_chart_rows(self):
+        rows = data.agreement_chart_rows(self.ev)
+        self.assertEqual([r["run"] for r in rows], [f"Iteration {n}" for n in range(5)] + ["Held-out"])
+        self.assertAlmostEqual(rows[-1]["agreement"], 60.0)
+        self.assertTrue(all(64.9 < r["baseline"] < 65.2 for r in rows))
+
+    def test_text_comes_from_evaluation_md(self):
+        doc = (ROOT / "EVALUATION.md").read_text(encoding="utf-8")
+        for line in [self.ev["headline"], self.ev["noise_check"], *self.ev["summary"], *self.ev["caveats"]]:
+            self.assertIn(line, doc)
+
+    def test_missing_or_repeated_runs_are_errors(self):
+        lines = data.RESULTS_CSV.read_text(encoding="utf-8").splitlines()
+        iteration2 = next(l for l in lines if ",iteration 2:" in l)
+        holdout = next(l for l in lines if ",holdout," in l)
+        cases = [([l for l in lines if ",iteration 2:" not in l], "missing iterations"),
+                 (lines + [iteration2], "more than once"),
+                 ([l for l in lines if ",holdout," not in l], "found 0"),
+                 (lines + [holdout], "found 2")]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "results.csv"
+            for rows, message in cases:
+                path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    data.load_evaluation(path)
+
+    def test_counts_that_disagree_with_the_csv_are_errors(self):
+        summary = json.loads(data.EVAL_SUMMARY.read_text(encoding="utf-8"))
+        summary["iterations"]["4"]["shortlist_hits"] = 13
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "summary.json"
+            path.write_text(json.dumps(summary), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                data.load_evaluation(summary_path=path)
+
+    def test_pct(self):
+        self.assertEqual(data.pct("0.8125"), "81.3%")
+        self.assertEqual(data.pct("1.0000"), "100%")
+        self.assertEqual(data.pct(0.6), "60.0%")
+
+
+class SampleDeepdiveTests(unittest.TestCase):
+    def setUp(self):
+        self.text = data.sample_deepdive()
+
+    def test_has_every_section_and_is_labelled_fictional(self):
+        self.assertTrue(self.text.startswith("# FICTIONAL"))
+        for heading in ("## Employer brief", "## Draft cover letter", "## Draft outreach message",
+                        "## Sources (fictional)"):
+            self.assertIn(heading, self.text)
+
+    def test_job_is_in_the_demo_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "demo.db"
+            make_demo_db.build(path)
+            conn = data.connect(path)
+            job = data.job_detail(conn, "4354797302")
+            conn.close()
+        self.assertEqual((job["company"], job["title"]), ("Matai Assurance", "Product Owner - Claims Platform"))
+        self.assertIn(job["company"], make_demo_db.COMPANIES)
+        self.assertIn(f"{job['title']} at {job['company']}", self.text)
+
+    def test_sources_are_reserved_example_domains(self):
+        urls = re.findall(r"https?://[^\s)]+", self.text)
+        self.assertEqual(len(urls), 3)
+        for url in urls:
+            host = re.match(r"https?://([^/]+)", url).group(1)
+            self.assertRegex(host, r"(^|\.)example\.(com|org|net)$", url)
+        sources = self.text.split("## Sources (fictional)")[1]
+        self.assertEqual(sources.count("(fictional"), 3)
+
+    def test_no_email_addresses(self):
+        self.assertIsNone(re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", self.text))
+
+    def test_sample_is_outside_the_ignored_data_dir(self):
+        # data/ is gitignored, so a sample there could not be committed
+        self.assertEqual(data.SAMPLE_DEEPDIVE.parent, ROOT / "ui")
+
+
+HINT ="Click a row to see why it got its verdict."
 
 
 class AppTests(unittest.TestCase):
@@ -249,6 +365,37 @@ class AppTests(unittest.TestCase):
         self.assertFalse(self.panel_open())
         self.assertIsNone(self.at.session_state["selected_job"])
         self.assertNotEqual(self.at.dataframe[0].key, old_key)  # row highlight cleared too
+
+    def test_tabs(self):
+        self.assertEqual([t.label for t in self.at.tabs], ["Jobs", "Evaluation", "Sample deepdive"])
+
+    def test_evaluation_tab(self):
+        text = self.text()
+        self.assertIn("high-recall filter", text)
+        self.assertIn("What this does and does not show", text)
+        self.assertEqual(len(self.at.table), 2)
+        self.assertIn("76.2% (96/126)", self.at.table[0].value.to_string())
+        self.assertIn("60.0% (24/40)", self.at.table[1].value.to_string())
+        self.assertTrue(any("no live API call" in c.value for c in self.at.caption))
+
+    def test_sample_tab(self):
+        banner = self.at.warning[0].value
+        self.assertIn("FICTIONAL", banner)
+        self.assertIn("Nothing here is a real employer, person or application", banner)
+        self.assertIn("No live API call", banner)
+        self.assertIn(data.sample_deepdive().strip(), self.text())
+
+    def test_other_tabs_render_without_the_database(self):
+        from streamlit.testing.v1 import AppTest
+
+        missing = Path(self.tmp.name) / "nope.db"
+        with mock.patch.dict(os.environ, {"JOBSCOUT_DB": str(missing)}):
+            at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60).run()
+        self.assertFalse(at.exception)
+        self.assertTrue(at.error)
+        self.assertEqual(len(at.table), 2)
+        self.assertTrue(at.warning)
+        self.assertFalse(missing.exists())
 
     def test_clicking_selected_row_again_deselects(self):
         self.click_row(1)
