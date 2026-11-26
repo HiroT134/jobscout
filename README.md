@@ -4,6 +4,22 @@
 
 Job Scout reads LinkedIn job-alert emails from Gmail with read-only access, scores each job against a written rubric with a language model, and writes a daily digest you can read. Nothing is ever sent or applied for automatically.
 
+## What it looks like
+
+<img src="docs/images/jobs.png" width="900" alt="Job list with filters for verdict, location, score and date, with one job selected and a side panel showing its score, verdict and the reasons for it">
+
+The job list with a selected job and its verdict rationale.
+
+<img src="docs/images/evaluation.png" width="900" alt="Bar chart of agreement with my labels for tuning iterations 0 to 4 and the held-out run, with a dashed line at the skip-everything baseline, followed by the tuning and held-out results tables">
+
+Agreement with my labels against the skip-everything baseline, with the held-out result below it.
+
+<img src="docs/images/deepdive.png" width="900" alt="Fictional sample deep dive: an employer brief with a numbered source for each claim, then a draft cover letter and a draft outreach message for approval">
+
+A fictional sample deepdive: an employer brief with sources, then two drafts for approval.
+
+All data in these screenshots is fictional. The evaluation figures are from my own labelled jobs.
+
 ## How it works
 
 The pipeline runs in this order:

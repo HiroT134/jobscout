@@ -1,13 +1,16 @@
 """scan_history.py tests: a temporary repository with a fake leaks file and a fake blocked term."""
 
 import contextlib
+import hashlib
 import io
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -26,6 +29,21 @@ def addr(local, domain):
 
 
 REAL_EMAIL = addr("real.person", "gmail.com")
+# A two-letter exact-list term, the kind that matches compressed image bytes by chance.
+# Joined at run time so this file does not contain it as a whole word.
+SHORT_TERM = "".join(["E", "Y"])
+
+
+def chunk(ctype: bytes, body: bytes) -> bytes:
+    return struct.pack(">I", len(body)) + ctype + body + struct.pack(">I", zlib.crc32(ctype + body))
+
+
+def make_png(pixels: bytes = b"\x00\x00\x00\x00", extra: list[bytes] = ()) -> bytes:
+    """A 1-pixel-high greyscale PNG whose row is `pixels` (filter byte first). The image
+    data is zlib level 0, so the pixel bytes appear verbatim in the file."""
+    ihdr = struct.pack(">IIBBBBB", len(pixels) - 1, 1, 8, 0, 0, 0, 0)
+    return (sh.PNG_SIGNATURE + chunk(b"IHDR", ihdr) + b"".join(extra)
+            + chunk(b"IDAT", zlib.compress(pixels, 0)) + chunk(b"IEND", b""))
 
 
 def git_env():
@@ -176,6 +194,115 @@ class TreeTests(ScanTestCase):
         self.assertEqual(code, sh.EXIT_CLEAN, out)
 
 
+class BinaryFileTests(ScanTestCase):
+    def write_bytes(self, rel, data):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    def review(self, *pngs: bytes):
+        lines = ["# Reviewed by eye: test images"]
+        lines += [f"{hashlib.sha256(p).hexdigest()}  img{i}.png" for i, p in enumerate(pngs)]
+        self.write("docs/images/REVIEWED.txt", "\n".join(lines) + "\n")
+
+    def test_blocked_term_in_text_chunk_fails(self):  # (a)
+        png = make_png(extra=[chunk(b"tEXt", b"Author\x00" + FAKE_TERM.encode())])
+        self.write_bytes("docs/images/a.png", png)
+        self.review(png)  # reviewed pixels do not excuse a leak in the metadata
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertIn(f"docs/images/a.png [tEXt chunk line 2]: {FAKE_TERM}", out)
+
+    def test_blocked_term_in_compressed_and_international_text_chunks_fails(self):
+        cases = {
+            "z.png": chunk(b"zTXt", b"Comment\x00\x00" + zlib.compress(FAKE_TERM.encode())),
+            "i.png": chunk(b"iTXt", b"Title\x00\x01\x00en\x00\x00" + zlib.compress(FAKE_TERM.encode())),
+            "x.png": chunk(b"eXIf", b"MM\x00*" + FAKE_TERM.encode()),
+        }
+        pngs = {name: make_png(extra=[c]) for name, c in cases.items()}
+        for name, png in pngs.items():
+            self.write_bytes(f"docs/images/{name}", png)
+        self.review(*pngs.values())
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        for name, ctype in (("z.png", "zTXt"), ("i.png", "iTXt"), ("x.png", "eXIf")):
+            self.assertRegex(out, rf"docs/images/{name} \[{ctype} chunk line \d+\]: {FAKE_TERM}")
+
+    def test_blocked_term_in_png_file_name_fails(self):
+        png = make_png()
+        self.write_bytes("docs/images/quuxbridge-holdings.png", png)
+        self.review(png)
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertIn(f"docs/images/quuxbridge-holdings.png (file name): {FAKE_TERM}", out)
+
+    def test_unreviewed_png_fails(self):  # (b)
+        self.write_bytes("docs/images/a.png", make_png())
+        self.review(make_png(b"\x00\x01\x02\x03"))  # a different image
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertIn("docs/images/a.png: PNG not listed in docs/images/REVIEWED.txt: "
+                      "needs human review of its pixels", out)
+
+    def test_reviewed_png_with_term_in_compressed_bytes_passes(self):  # (c)
+        self.write(".private/leaks_exact.txt", f"{SHORT_TERM}\n")
+        png = make_png(b"\x00 " + SHORT_TERM.encode() + b" ")
+        self.assertIn(f" {SHORT_TERM} ".encode(), png)  # the raw-text scan used to hit this
+        self.write_bytes("docs/images/a.png", png)
+        self.review(png)
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_CLEAN, out)
+        # REVIEWED.txt itself is text and still scanned; a hit there would show up
+        self.write("notes.txt", f"see {SHORT_TERM}\n")
+        self.assertEqual(self.run_scan()[0], sh.EXIT_HITS)
+
+    def test_missing_reviewed_list_with_png_fails(self):  # (d)
+        self.write_bytes("docs/images/a.png", make_png())
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertIn("docs/images/a.png: PNG present but docs/images/REVIEWED.txt is missing: "
+                      "needs human review of its pixels", out)
+
+    def test_missing_reviewed_list_without_png_passes(self):
+        self.write("a.txt", "x\n")
+        self.assertEqual(self.run_scan()[0], sh.EXIT_CLEAN)
+
+    def test_malformed_reviewed_list_is_an_error(self):
+        self.write("docs/images/REVIEWED.txt", "# header\nnot-a-hash  a.png\n")
+        code, _, err = self.run_scan()
+        self.assertEqual(code, sh.EXIT_ERROR)
+        self.assertIn("expected a SHA-256 hash", err)
+
+    def test_malformed_png_fails_even_if_reviewed(self):
+        good = make_png()
+        cases = {"crc.png": good[:-1] + bytes([good[-1] ^ 1]),
+                 "trailing.png": good + FAKE_TERM.encode(),
+                 "truncated.png": good[:-6]}
+        for name, data in cases.items():
+            self.write_bytes(f"docs/images/{name}", data)
+        self.review(*cases.values())
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        for name in cases:
+            self.assertRegex(out, rf"docs/images/{name}: malformed PNG \(.+\), review manually")
+        self.assertNotIn(FAKE_TERM, out)  # never prints the content
+
+    def test_unsupported_binary_types_fail(self):  # (e)
+        cases = {"photo.jpg": b"\xff\xd8\xff\xe0\x00\x10JFIF\x00",
+                 "anim.gif": b"GIF89a\x01\x00\x01\x00\x00\x00\x00;",
+                 "doc.pdf": b"%PDF-1.4\n1 0 obj << >> endobj\n%%EOF\n",  # all ASCII, still binary
+                 "bundle.zip": b"PK\x03\x04\x14\x00\x00\x00",
+                 "blob.dat": b"\x00\x01\x02text",
+                 "latin1.txt": "caf\xe9\n".encode("latin-1"),
+                 "fake.png": b"not really a png\n"}
+        for name, data in cases.items():
+            self.write_bytes(name, data)
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        for name in cases:
+            self.assertIn(f"{name}: unsupported binary, review manually", out)
+
+
 @unittest.skipUnless(shutil.which("git"), "git not installed")
 class HistoryTests(ScanTestCase):
     def git(self, *args):
@@ -224,6 +351,77 @@ class HistoryTests(ScanTestCase):
         self.assertIn(FAKE_TERM, out)
         self.assertIn(REAL_EMAIL, out)
         self.assertIn("author/committer/message", out)
+
+    def commit_png(self, rel, png):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(png)
+        self.git("add", rel)
+        self.git("commit", "-q", "-m", "add image")
+
+    def test_unreviewed_png_in_history_fails_after_deletion(self):
+        self.write("docs/images/REVIEWED.txt", "# none reviewed\n")
+        self.commit_png("docs/images/a.png", make_png())
+        self.git("rm", "-q", "docs/images/a.png")
+        self.git("commit", "-q", "-m", "remove image")
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertRegex(out, r"history docs/images/a\.png \(blob [0-9a-f]+\): PNG not listed in "
+                              r"docs/images/REVIEWED\.txt: needs human review of its pixels")
+
+    def test_reviewed_png_in_history_has_no_false_hits(self):
+        self.write(".private/leaks_exact.txt", f"{SHORT_TERM}\n")
+        png = make_png(b"\x00\n+ " + SHORT_TERM.encode() + b" \n")  # a diff line, if read as text
+        self.write("docs/images/REVIEWED.txt", f"{hashlib.sha256(png).hexdigest()}  a.png\n")
+        self.git("add", "docs/images/REVIEWED.txt")
+        self.commit_png("docs/images/a.png", png)
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_CLEAN, out)
+
+    def test_text_chunk_in_history_png_fails(self):
+        png = make_png(extra=[chunk(b"tEXt", b"Author\x00" + FAKE_TERM.encode())])
+        self.write("docs/images/REVIEWED.txt", f"{hashlib.sha256(png).hexdigest()}  a.png\n")
+        self.commit_png("docs/images/a.png", png)
+        (self.root / "docs/images/a.png").unlink()
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertRegex(out, rf"history docs/images/a\.png \(blob [0-9a-f]+\) \[tEXt chunk line 2\]: {FAKE_TERM}")
+
+    def test_unsupported_binary_in_history_fails(self):
+        self.commit_png("files/report.pdf", b"%PDF-1.4\n%%EOF\n")
+        (self.root / "files/report.pdf").unlink()
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertRegex(out, r"history files/report\.pdf \(blob [0-9a-f]+\): unsupported binary, review manually")
+
+    def test_text_file_marked_binary_by_gitattributes_is_still_scanned(self):
+        self.write(".gitattributes", "*.md -diff\n")
+        self.write("notes.md", f"{FAKE_TERM}\n")
+        self.git("add", ".gitattributes", "notes.md")
+        self.git("commit", "-q", "-m", "notes")
+        self.write("notes.md", "clean\n")
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertRegex(out, rf"history [0-9a-f]+ notes\.md:1: {FAKE_TERM}")
+
+    def test_ignored_binary_is_skipped_but_force_added_is_not(self):
+        self.write(".gitignore", "data/\n")
+        (self.root / "data").mkdir()
+        (self.root / "data/demo.db").write_bytes(b"SQLite format 3\x00")
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_CLEAN, out)
+        self.assertIn("1 git-ignored binary file(s) skipped", out)
+        self.git("add", "-f", "data/demo.db")
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertIn("data/demo.db: unsupported binary, review manually", out)
+
+    def test_ignored_text_file_is_still_scanned(self):
+        self.write(".gitignore", "notes/\n")
+        self.write("notes/a.txt", f"{FAKE_TERM}\n")
+        code, out, _ = self.run_scan()
+        self.assertEqual(code, sh.EXIT_HITS)
+        self.assertIn(f"notes/a.txt:1: {FAKE_TERM}", out)
 
 
 if __name__ == "__main__":

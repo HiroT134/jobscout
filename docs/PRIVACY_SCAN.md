@@ -97,6 +97,22 @@ are skipped, since their content was already checked in the commit that added it
 A repository with no commits gets a tree scan only. If `.git` exists but git cannot run,
 the scan stops with exit code 2 instead of skipping the history.
 
+## Images and other binary files
+
+A PNG's compressed pixels are not text and match short exact-list terms by chance, and no
+text scan can read words drawn in the pixels, so PNGs (in the tree and in every blob in
+git history) are handled differently: the scanner parses the PNG, scans its file name and
+every text and other ancillary metadata chunk (`tEXt`, `zTXt`, `iTXt`, `eXIf` and so on)
+with the normal rules, and requires the file's SHA-256 to be listed in
+`docs/images/REVIEWED.txt` (one hash per line, then the file name; `#` comments allowed),
+which records that a person looked at the image. An unlisted or malformed PNG fails, and
+every PNG fails if that file is missing; changing an image changes its hash, so it needs
+a new review. Any other binary file (not UTF-8, containing a NUL byte, or with an
+extension such as `.jpg`, `.gif`, `.pdf` or `.zip`) fails as "unsupported binary, review
+manually". Binary files that git ignores in the working tree, such as `data/demo.db`, are
+skipped and counted in the summary; force-adding one makes it tracked, and it is then
+checked. A `REVIEWED.txt` line that is not a hash stops the scan with exit code 2.
+
 ## What the tree scan skips
 
 - `.git/` (covered by the history scan), `.private/` (the lists themselves) and `.venv/`.

@@ -1,0 +1,5 @@
+# Reviewed by eye: contains only fictional demo data
+# One line per PNG: SHA-256, then the file name. Re-review and update when an image changes.
+25bf16dd8b909f1f2eb385395b2fb5bfc9e2fed3c6f186f0c304a96806903415  jobs.png
+1641631a8ade0ac16e43512c1989850f6c63fde55f722fd5d61be97744aeee08  evaluation.png
+6c42503993de3187ec39fa7a15ab80c391f8a33c8674d473fc90c7313cf6cdb4  deepdive.png
