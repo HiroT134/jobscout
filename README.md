@@ -4,6 +4,16 @@
 
 Job Scout reads LinkedIn job-alert emails from Gmail with read-only access, scores each job against a written rubric with a language model, and writes a daily digest you can read. Nothing is ever sent or applied for automatically.
 
+## The problem
+
+LinkedIn job alerts match on the keywords and filters I set, such as title and location. They can't know what makes a role worth my time: the seniority, whether the work is product delivery or pure consulting, the type of employer, or whether it's a contract. So the inbox fills with listings that fit the keywords but not me, and the few that do fit are buried among them.
+
+In my own labelled sample, 108 of 166 alerts (65%) were roles I would skip, and 30 (about 18%) were ones I would shortlist. Reading everything is slow, and skimming is how a good role gets missed.
+
+## What Job Scout does about it
+
+It scores each alert against a written rubric of what I actually want and produces a short daily digest, so I read a short list instead of every email. For the roles I choose, it researches the employer and drafts an application for me to approve, edit or skip. Nothing is sent automatically. It is built to avoid hiding roles I would want, not to be a perfect classifier. The evaluation section shows how well that works and where it doesn't.
+
 ## What it looks like
 
 <img src="docs/images/jobs.png" width="900" alt="Job list with filters for verdict, location, score and date, with one job selected and a side panel showing its score, verdict and the reasons for it">
